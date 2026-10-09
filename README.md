@@ -261,6 +261,10 @@ exit
 Операции с записями таблиц пока не реализованы.
 
 
+## Демонстрация
+
+[![Демонстрация управления таблицами](https://asciinema.org/a/JkDmBmeU7HgNuB7L.svg)](https://asciinema.org/a/JkDmBmeU7HgNuB7L?t=47)
+
 
 ## Автор
 
