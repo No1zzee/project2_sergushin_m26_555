@@ -23,10 +23,12 @@ from primitive_db.core import (
     get_schema,
     insert,
     select,
+    select_rows,
     update,
     validate_fields,
     validate_table_data,
 )
+from primitive_db.decorators import handle_db_errors
 from primitive_db.parser import parse_command
 from primitive_db.utils import (
     load_metadata,
@@ -58,6 +60,8 @@ def execute_crud(metadata, operation):
     schema = get_schema(metadata, table_name)
     if command == "insert":
         data = insert(metadata, table_name, operation["values"])
+        if data is None:
+            return
         save_table_data(table_name, data)
         print(INSERTED_MESSAGE.format(
             row_id=data[-1][ID_COLUMN_NAME], table_name=table_name
@@ -74,11 +78,13 @@ def execute_crud(metadata, operation):
         print(f"Столбцы: {', '.join(metadata[table_name])}")
         print(f"Количество записей: {len(data)}")
     elif command == "select":
-        print_rows(schema, select(data, where))
+        rows = select(data, where)
+        if rows is not None:
+            print_rows(schema, rows)
     else:
         if command == "update":
             validate_fields(schema, operation["set"], allow_id=False)
-        matched = select(data, where)
+        matched = select_rows(data, where)
         if not matched:
             print(NO_MATCH_MESSAGE)
             return
@@ -88,11 +94,14 @@ def execute_crud(metadata, operation):
         else:
             changed = delete(data, where)
             message = DELETED_MESSAGE
+        if changed is None:
+            return
         save_table_data(table_name, changed)
         for row in matched:
             print(message.format(row_id=row[ID_COLUMN_NAME], table_name=table_name))
 
 
+@handle_db_errors
 def execute_command(metadata, operation):
     """Выполнить разобранную команду; вернуть True для выхода"""
     command = operation["command"]
@@ -107,7 +116,9 @@ def execute_command(metadata, operation):
             print(f"- {name}")
     elif command == "create_table":
         name = operation["table"]
-        create_table(metadata, name, operation["columns"])
+        updated_metadata = create_table(metadata, name, operation["columns"])
+        if updated_metadata is None:
+            return False
         save_table_data(name, [])
         save_metadata(META_FILE, metadata)
         print(TABLE_CREATED_MESSAGE.format(
@@ -115,13 +126,28 @@ def execute_command(metadata, operation):
         ))
     elif command == "drop_table":
         name = operation["table"]
-        drop_table(metadata, name)
+        get_schema(metadata, name)
+        updated_metadata = drop_table(metadata, name)
+        if updated_metadata is None:
+            return False
         save_metadata(META_FILE, metadata)
         remove_table_data(name)
         print(TABLE_DROPPED_MESSAGE.format(table_name=name))
     else:
         execute_crud(metadata, operation)
     return False
+
+
+@handle_db_errors
+def process_input(user_input):
+    """Разобрать ввод и выполнить команду с централизованной обработкой ошибок."""
+    operation = parse_command(user_input)
+    if operation is None:
+        return False
+    if operation["command"] == "exit":
+        return True
+    metadata = load_metadata(META_FILE)
+    return execute_command(metadata, operation)
 
 
 def run():
@@ -133,16 +159,5 @@ def run():
         except (EOFError, KeyboardInterrupt):
             print()
             return
-        try:
-            operation = parse_command(user_input)
-            if operation is None:
-                continue
-            if operation["command"] == "exit":
-                return
-            metadata = load_metadata(META_FILE)
-            if execute_command(metadata, operation):
-                return
-        except ValueError as error:
-            print(error)
-        except OSError as error:
-            print(f"Ошибка работы с файлами: {error}")
+        if process_input(user_input) is True:
+            return
