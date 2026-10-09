@@ -1,129 +1,148 @@
-"""Ввод команд и управление работой приложения."""
-
-import shlex
+"""Взаимодействие с пользователем и сохранение результатов операций"""
 
 import prompt
+from prettytable import PrettyTable
 
 from primitive_db.constants import (
     COMMAND_PROMPT,
-    CREATE_COMMAND,
-    DROP_COMMAND,
+    DELETED_MESSAGE,
     EMPTY_TABLES_MESSAGE,
-    EXIT_COMMAND,
-    HELP_COMMAND,
     HELP_MESSAGE,
-    INVALID_ARGUMENTS_MESSAGE,
-    INVALID_VALUE_MESSAGE,
-    LIST_COMMAND,
+    ID_COLUMN_NAME,
+    INSERTED_MESSAGE,
     META_FILE,
-    METADATA_ERROR_MESSAGE,
-    SAVE_ERROR_MESSAGE,
+    NO_MATCH_MESSAGE,
     TABLE_CREATED_MESSAGE,
     TABLE_DROPPED_MESSAGE,
-    UNKNOWN_COMMAND_MESSAGE,
+    UPDATED_MESSAGE,
 )
-from primitive_db.core import create_table, drop_table
-from primitive_db.utils import load_metadata, save_metadata
+from primitive_db.core import (
+    create_table,
+    delete,
+    drop_table,
+    get_schema,
+    insert,
+    select,
+    update,
+    validate_fields,
+    validate_table_data,
+)
+from primitive_db.parser import parse_command
+from primitive_db.utils import (
+    load_metadata,
+    load_table_data,
+    remove_table_data,
+    save_metadata,
+    save_table_data,
+)
 
 
 def print_help():
-    """Показать доступные команды."""
+    """Показать команды приложения"""
     print(HELP_MESSAGE)
 
 
-def print_tables(metadata):
-    """Вывести имена существующих таблиц."""
-    if not metadata:
-        print(EMPTY_TABLES_MESSAGE)
+def print_rows(schema, rows):
+    """Вывести записи в порядке столбцов схемы через PrettyTable"""
+    table = PrettyTable()
+    table.field_names = list(schema)
+    for row in rows:
+        table.add_row([row[name] for name in schema])
+    print(table)
+
+
+def execute_crud(metadata, operation):
+    """Проверить схему, выполнить CRUD-команду и сохранить изменения"""
+    command = operation["command"]
+    table_name = operation["table"]
+    schema = get_schema(metadata, table_name)
+    if command == "insert":
+        data = insert(metadata, table_name, operation["values"])
+        save_table_data(table_name, data)
+        print(INSERTED_MESSAGE.format(
+            row_id=data[-1][ID_COLUMN_NAME], table_name=table_name
+        ))
         return
 
-    for table_name in metadata:
-        print(f"- {table_name}")
-
-
-def execute_command(metadata, command, arguments):
-    """Выполнить команду и вернуть признак завершения приложения."""
-    if command == EXIT_COMMAND:
-        if arguments:
-            raise ValueError(INVALID_ARGUMENTS_MESSAGE)
-        return True
-
-    if command == HELP_COMMAND:
-        if arguments:
-            raise ValueError(INVALID_ARGUMENTS_MESSAGE)
-        print_help()
-
-    elif command == LIST_COMMAND:
-        if arguments:
-            raise ValueError(INVALID_ARGUMENTS_MESSAGE)
-        print_tables(metadata)
-
-    elif command == CREATE_COMMAND:
-        if not arguments:
-            raise ValueError(INVALID_ARGUMENTS_MESSAGE)
-
-        table_name, *columns = arguments
-        updated_metadata = create_table(metadata, table_name, columns)
-        save_metadata(META_FILE, updated_metadata)
-        print(
-            TABLE_CREATED_MESSAGE.format(
-                table_name=table_name,
-                columns=", ".join(updated_metadata[table_name]),
-            )
-        )
-
-    elif command == DROP_COMMAND:
-        if not arguments:
-            raise ValueError(INVALID_ARGUMENTS_MESSAGE)
-
-        table_name, *extra_arguments = arguments
-        if extra_arguments:
-            raise ValueError(INVALID_ARGUMENTS_MESSAGE)
-
-        updated_metadata = drop_table(metadata, table_name)
-        save_metadata(META_FILE, updated_metadata)
-        print(TABLE_DROPPED_MESSAGE.format(table_name=table_name))
-
+    data = load_table_data(table_name)
+    validate_table_data(schema, data)
+    where = operation.get("where")
+    if where is not None:
+        validate_fields(schema, where)
+    if command == "info":
+        print(f"Таблица: {table_name}")
+        print(f"Столбцы: {', '.join(metadata[table_name])}")
+        print(f"Количество записей: {len(data)}")
+    elif command == "select":
+        print_rows(schema, select(data, where))
     else:
-        print(UNKNOWN_COMMAND_MESSAGE.format(command=command))
+        if command == "update":
+            validate_fields(schema, operation["set"], allow_id=False)
+        matched = select(data, where)
+        if not matched:
+            print(NO_MATCH_MESSAGE)
+            return
+        if command == "update":
+            changed = update(data, operation["set"], where)
+            message = UPDATED_MESSAGE
+        else:
+            changed = delete(data, where)
+            message = DELETED_MESSAGE
+        save_table_data(table_name, changed)
+        for row in matched:
+            print(message.format(row_id=row[ID_COLUMN_NAME], table_name=table_name))
 
+
+def execute_command(metadata, operation):
+    """Выполнить разобранную команду; вернуть True для выхода"""
+    command = operation["command"]
+    if command == "exit":
+        return True
+    if command == "help":
+        print_help()
+    elif command == "list_tables":
+        if not metadata:
+            print(EMPTY_TABLES_MESSAGE)
+        for name in metadata:
+            print(f"- {name}")
+    elif command == "create_table":
+        name = operation["table"]
+        create_table(metadata, name, operation["columns"])
+        save_table_data(name, [])
+        save_metadata(META_FILE, metadata)
+        print(TABLE_CREATED_MESSAGE.format(
+            table_name=name, columns=", ".join(metadata[name])
+        ))
+    elif command == "drop_table":
+        name = operation["table"]
+        drop_table(metadata, name)
+        save_metadata(META_FILE, metadata)
+        remove_table_data(name)
+        print(TABLE_DROPPED_MESSAGE.format(table_name=name))
+    else:
+        execute_crud(metadata, operation)
     return False
 
 
 def run():
-    """Запустить цикл загрузки метаданных и обработки команд."""
+    """Читать команды до exit; ошибки ввода не завершают приложение"""
     print_help()
-
     while True:
-        try:
-            metadata = load_metadata(META_FILE)
-        except (OSError, ValueError) as error:
-            print(METADATA_ERROR_MESSAGE.format(error=error))
-            return
-
         try:
             user_input = prompt.string(COMMAND_PROMPT)
         except (EOFError, KeyboardInterrupt):
             print()
             return
-
         try:
-            parts = shlex.split(user_input)
-        except ValueError:
-            print(INVALID_VALUE_MESSAGE.format(value=user_input))
-            continue
-
-        if not parts:
-            continue
-
-        command, *arguments = parts
-
-        try:
-            should_exit = execute_command(metadata, command, arguments)
+            operation = parse_command(user_input)
+            if operation is None:
+                continue
+            if operation["command"] == "exit":
+                return
+            metadata = load_metadata(META_FILE)
+            if execute_command(metadata, operation):
+                return
         except ValueError as error:
             print(error)
         except OSError as error:
-            print(SAVE_ERROR_MESSAGE.format(error=error))
-        else:
-            if should_exit:
-                return
+            print(f"Ошибка работы с файлами: {error}")
