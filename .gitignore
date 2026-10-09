@@ -1,5 +1,5 @@
 .venv/
-.venv-backup/
+.venv-backup*/
 venv/
 dist/
 __pycache__/

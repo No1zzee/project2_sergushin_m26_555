@@ -89,8 +89,7 @@ delete from users where ID = 1
 ## Декораторы и кэширование
 
 `handle_db_errors` обрабатывает FileNotFoundError, KeyError, ValueError,
-ошибки файловой системы и прочие Exception. Ожидаемые сообщения предыдущих
-этапов сохраняются. Ошибка операции возвращает None, поэтому engine не
+ошибки файловой системы и прочие Exception. Ошибка операции возвращает None, поэтому engine не
 записывает неудачный результат и не выводит сообщение об успехе.
 
 `confirm_action(action_name)` применяется к drop_table и delete.
