@@ -116,7 +116,7 @@ def parse_set(text):
 
 
 def values_from_tokens(tokens, position):
-    """Разобрать ровно одну группу значений в круглых скобках."""
+    """Разобрать ровно одну группу значений в круглых скобках"""
     expect(tokens, position, "symbol", "(")
     position += 1
     values = []

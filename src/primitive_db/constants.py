@@ -17,6 +17,20 @@ BOOL_VALUES = {"true": True, "false": False}
 QUOTES = "\"'"
 PUNCTUATION = "(),=:"
 COMMAND_PROMPT = "Введите команду: "
+CONFIRM_PROMPT = 'Вы уверены, что хотите выполнить "{action_name}"? [y/n]: '
+CONFIRM_ANSWER = "y"
+CANCELLED_MESSAGE = "Операция отменена."
+DROP_ACTION = "удаление таблицы"
+DELETE_ACTION = "удаление записи"
+TIME_MESSAGE = "Функция {function_name} выполнилась за {elapsed:.3f} секунд"
+FILE_NOT_FOUND_MESSAGE = (
+    "Ошибка: Файл данных не найден. Возможно, база данных не инициализирована."
+)
+KEY_ERROR_MESSAGE = "Ошибка: Таблица или столбец {error} не найден."
+VALIDATION_ERROR_MESSAGE = "Ошибка валидации: {error}"
+FILE_ERROR_MESSAGE = "Ошибка работы с файлами: {error}"
+UNEXPECTED_ERROR_MESSAGE = "Произошла непредвиденная ошибка: {error}"
+KNOWN_ERROR_PREFIXES = ("Ошибка", "Некорректное значение:", "Функции ")
 INVALID_VALUE_MESSAGE = "Некорректное значение: {value}. Попробуйте снова."
 UNKNOWN_COMMAND_MESSAGE = "Функции {command} нет. Попробуйте снова."
 TABLE_EXISTS_MESSAGE = 'Ошибка: Таблица "{table_name}" уже существует.'

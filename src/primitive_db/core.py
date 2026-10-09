@@ -1,6 +1,8 @@
 """Проверка схемы и операции с таблицами и записями"""
 
 from primitive_db.constants import (
+    DELETE_ACTION,
+    DROP_ACTION,
     ID_COLUMN,
     ID_COLUMN_NAME,
     INVALID_VALUE_MESSAGE,
@@ -8,7 +10,15 @@ from primitive_db.constants import (
     TABLE_MISSING_MESSAGE,
     VALID_TYPES,
 )
+from primitive_db.decorators import (
+    confirm_action,
+    create_cacher,
+    handle_db_errors,
+    log_time,
+)
 from primitive_db.utils import load_table_data
+
+SELECT_CACHE = create_cacher()
 
 
 def invalid(value):
@@ -50,6 +60,7 @@ def get_schema(metadata, table_name):
     return dict(column.split(":") for column in columns)
 
 
+@handle_db_errors
 def create_table(metadata, table_name, columns):
     """Добавить в метаданные таблицу с проверенной схемой"""
     if table_name in metadata:
@@ -57,13 +68,17 @@ def create_table(metadata, table_name, columns):
     if not table_name.isidentifier():
         invalid(table_name)
     metadata[table_name] = validate_columns(columns)
+    SELECT_CACHE.clear()
     return metadata
 
 
+@handle_db_errors
+@confirm_action(DROP_ACTION)
 def drop_table(metadata, table_name):
     """Удалить таблицу из метаданных"""
     get_schema(metadata, table_name)
     del metadata[table_name]
+    SELECT_CACHE.clear()
     return metadata
 
 
@@ -91,6 +106,8 @@ def validate_table_data(schema, data):
         seen_ids.add(row_id)
 
 
+@handle_db_errors
+@log_time
 def insert(metadata, table_name, values):
     """Проверить значения, назначить ID и вернуть данные с новой записью"""
     schema = get_schema(metadata, table_name)
@@ -102,6 +119,7 @@ def insert(metadata, table_name, values):
     data = load_table_data(table_name)
     validate_table_data(schema, data)
     new_id = max((row[ID_COLUMN_NAME] for row in data), default=0) + 1
+    SELECT_CACHE.clear()
     return data + [{ID_COLUMN_NAME: new_id, **fields}]
 
 
@@ -113,23 +131,47 @@ def matches(row, where_clause):
     )
 
 
+def snapshot_fields(fields):
+    """Получить неизменяемое представление полей с различением bool и int."""
+    return tuple((name, type(value).__name__, value) for name, value in fields.items())
+
+
+def select_rows(table_data, where_clause=None):
+    """Отфильтровать записи без кэша и служебного вывода для внутренних вызовов"""
+    return [
+        dict(row) for row in table_data
+        if where_clause is None or matches(row, where_clause)
+    ]
+
+
+@handle_db_errors
+@log_time
 def select(table_data, where_clause=None):
-    """Вернуть все записи или записи, удовлетворяющие условию."""
-    if where_clause is None:
-        return list(table_data)
-    return [row for row in table_data if matches(row, where_clause)]
+    """Вернуть копии результатов запроса, используя кэш в замыкании"""
+    snapshot = tuple(snapshot_fields(row) for row in table_data)
+    condition = None if where_clause is None else snapshot_fields(where_clause)
+    key = (snapshot, condition)
+    rows = SELECT_CACHE(key, lambda: select_rows(table_data, where_clause))
+    return [dict(row) for row in rows]
 
 
+@handle_db_errors
 def update(table_data, set_clause, where_clause):
     """Вернуть записи с изменёнными полями для совпавших строк"""
     if ID_COLUMN_NAME in set_clause:
         invalid("ID нельзя изменять вручную")
-    return [
+    updated = [
         {**row, **set_clause} if matches(row, where_clause) else dict(row)
         for row in table_data
     ]
+    SELECT_CACHE.clear()
+    return updated
 
 
+@handle_db_errors
+@confirm_action(DELETE_ACTION)
 def delete(table_data, where_clause):
     """Вернуть записи, не соответствующие условию удаления"""
-    return [row for row in table_data if not matches(row, where_clause)]
+    remaining = [row for row in table_data if not matches(row, where_clause)]
+    SELECT_CACHE.clear()
+    return remaining
